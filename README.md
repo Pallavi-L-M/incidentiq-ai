@@ -19,6 +19,12 @@ npm run dev
 
 Open the Vite URL printed in the terminal (normally http://localhost:5173). The Express API runs on port 3001. For a production build, run `npm run build` and then `npm start`; the server serves `dist/` and API routes from the same origin.
 
+## Accounts and team access
+
+Open the app and choose **Create an account** to register with a name, email, and password (8 characters minimum). Each person signs in with their own credentials and can sign out from the profile area. Passwords are stored as salted scrypt hashes; sessions use random, HTTP-only, same-site cookies and expire after 14 days. Account and session records are stored under `data/` and are excluded from Git.
+
+This prototype is a shared engineering workspace: signed-in users can see the same incident records and use the same configured Hindsight bank. Keep `data/` on durable storage when deploying. For a public production service, add email verification, password reset, rate limiting, and an organization invitation flow before opening account registration to everyone.
+
 ## Hindsight Cloud setup
 
 1. Create or select a memory bank in the Hindsight Cloud console.
@@ -45,7 +51,7 @@ The supplied five `DEMO-` records are clearly labeled sample data. They are kept
 
 ## Storage and deployment
 
-Incident records are stored in `data/incidents.json` on the server. This is suitable for a hackathon single-instance demo; persistent production hosting should mount durable storage or replace the repository with a managed database. Hindsight is persistent across app sessions and is scoped by `HINDSIGHT_BANK_ID`. In a multi-tenant production app, derive and authorize bank IDs from authenticated organization membership rather than accepting them from the browser.
+Incident records, accounts, and sessions are stored as JSON files under `data/`. This is suitable for a single-instance prototype; persistent production hosting should mount durable storage or replace these files with a managed database. Hindsight is persistent across app sessions and is shared by this prototype's team workspace through `HINDSIGHT_BANK_ID`. In a multi-tenant production app, derive and authorize bank IDs from authenticated organization membership rather than accepting them from the browser.
 
 Deploy the Node service with Node 20, set the server-side environment variables, expose the configured port, and make sure the host provides persistent storage for `data/`. No secrets belong in a client environment variable or in Git.
 
