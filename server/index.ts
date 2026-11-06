@@ -3,16 +3,37 @@ import express from 'express';
 import cors from 'cors';
 import { HindsightClient } from '@vectorize-io/hindsight-client';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const app = express();
-app.use(cors()); app.use(express.json({ limit: '1mb' }));
+app.use(cors({ origin: process.env.APP_ORIGIN || ['http://localhost:5173','http://127.0.0.1:5173'], credentials: true })); app.use(express.json({ limit: '1mb' }));
 const port = Number(process.env.PORT || 3001);
 const bankId = process.env.HINDSIGHT_BANK_ID || 'incidentiq-demo';
 const ready = () => Boolean(process.env.HINDSIGHT_API_KEY && process.env.HINDSIGHT_BASE_URL);
 const hindsight = () => new HindsightClient({ baseUrl: process.env.HINDSIGHT_BASE_URL!, apiKey: process.env.HINDSIGHT_API_KEY! });
 const dataDir = path.resolve('data'); const dbFile = path.join(dataDir, 'incidents.json');
+const usersFile = path.join(dataDir, 'users.json'); const sessionsFile = path.join(dataDir, 'sessions.json');
+type User = { id:string; name:string; email:string; passwordHash:string; passwordSalt:string; createdAt:string };
+type Session = { userId:string; expiresAt:number };
+type PublicUser = { id:string; name:string; email:string };
+const scrypt = promisify(scryptCallback);
+const sessionCookie = 'incidentiq_session'; const sessionDuration = 1000 * 60 * 60 * 24 * 14;
+async function readJson<T>(file:string, fallback:T):Promise<T> { try { return JSON.parse(await readFile(file,'utf8')) as T; } catch { return fallback; } }
+async function writeJson(file:string, value:unknown) { await mkdir(dataDir,{recursive:true}); const temp=`${file}.${randomUUID()}.tmp`; await writeFile(temp,JSON.stringify(value,null,2),{mode:0o600}); await import('node:fs/promises').then(({rename})=>rename(temp,file)); }
+function publicUser(user:User):PublicUser { return {id:user.id,name:user.name,email:user.email}; }
+function cookieValue(req:express.Request,name:string) { return (req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(`${name}=`))?.slice(name.length+1); }
+function setSessionCookie(res:express.Response,token:string) { res.cookie(sessionCookie,token,{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production',path:'/',maxAge:sessionDuration}); }
+async function createSession(userId:string,res:express.Response) { const token=randomBytes(32).toString('base64url'); const key=createHash('sha256').update(token).digest('hex'); const sessions=await readJson<Record<string,Session>>(sessionsFile,{}); const now=Date.now(); for(const [id,s] of Object.entries(sessions)) if(s.expiresAt<=now) delete sessions[id]; sessions[key]={userId,expiresAt:now+sessionDuration}; await writeJson(sessionsFile,sessions); setSessionCookie(res,token); }
+async function requireAuth(req:express.Request,res:express.Response,next:express.NextFunction) { const token=cookieValue(req,sessionCookie); if(!token) return res.status(401).json({error:'Sign in to continue.'}); const key=createHash('sha256').update(token).digest('hex'); const sessions=await readJson<Record<string,Session>>(sessionsFile,{}); const session=sessions[key]; if(!session||session.expiresAt<=Date.now()) { if(session) { delete sessions[key]; await writeJson(sessionsFile,sessions); } res.clearCookie(sessionCookie,{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production',path:'/'}); return res.status(401).json({error:'Your session expired. Sign in again.'}); } const users=await readJson<User[]>(usersFile,[]); const user=users.find(x=>x.id===session.userId); if(!user) return res.status(401).json({error:'Account not found. Sign in again.'}); (req as express.Request & {user:PublicUser}).user=publicUser(user); next(); }
+function currentUser(req:express.Request) { return (req as express.Request & {user:PublicUser}).user; }
+app.post('/api/auth/signup',async(req,res)=>{ const name=cleanStr(req.body?.name,80), email=cleanStr(req.body?.email,254).toLowerCase(), password=typeof req.body?.password==='string'?req.body.password:''; if(!name||!email||!/^\S+@\S+\.\S+$/.test(email)||password.length<8) return res.status(400).json({error:'Enter your name, a valid email, and a password with at least 8 characters.'}); const users=await readJson<User[]>(usersFile,[]); if(users.some(u=>u.email===email)) return res.status(409).json({error:'An account with this email already exists. Sign in instead.'}); const salt=randomBytes(16).toString('hex'); const passwordHash=(await scrypt(password,salt,64) as Buffer).toString('hex'); const user:User={id:randomUUID(),name,email,passwordHash,passwordSalt:salt,createdAt:new Date().toISOString()}; users.push(user); await writeJson(usersFile,users); await createSession(user.id,res); res.status(201).json({user:publicUser(user)}); });
+app.post('/api/auth/login',async(req,res)=>{ const email=cleanStr(req.body?.email,254).toLowerCase(), password=typeof req.body?.password==='string'?req.body.password:''; const users=await readJson<User[]>(usersFile,[]); const user=users.find(u=>u.email===email); if(!user) return res.status(401).json({error:'Email or password is incorrect.'}); const candidate=await scrypt(password,user.passwordSalt,64) as Buffer; const stored=Buffer.from(user.passwordHash,'hex'); if(candidate.length!==stored.length||!timingSafeEqual(candidate,stored)) return res.status(401).json({error:'Email or password is incorrect.'}); await createSession(user.id,res); res.json({user:publicUser(user)}); });
+app.get('/api/auth/me',requireAuth,(req,res)=>res.json({user:currentUser(req)}));
+app.post('/api/auth/logout',async(req,res)=>{ const token=cookieValue(req,sessionCookie); if(token){const key=createHash('sha256').update(token).digest('hex');const sessions=await readJson<Record<string,Session>>(sessionsFile,{});delete sessions[key];await writeJson(sessionsFile,sessions);} res.clearCookie(sessionCookie,{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production',path:'/'});res.json({ok:true}); });
+app.use('/api',requireAuth);
 type Incident = { id:string; title:string; service:string; description:string; error:string; severity:string; environment:string; timestamp:string; status:string; resolution?:string; failedAttempts?:string; resolutionMinutes?:number; sample?:boolean; rootCause?:string; steps?:string[]; failed?:string[] };
 async function readIncidents():Promise<Incident[]> { try { return JSON.parse(await readFile(dbFile,'utf8')); } catch { return []; } }
 async function saveIncidents(items:Incident[]) { await mkdir(dataDir,{recursive:true}); await writeFile(dbFile,JSON.stringify(items,null,2)); }
