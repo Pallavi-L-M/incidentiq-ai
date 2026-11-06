@@ -23,6 +23,8 @@ Open the Vite URL printed in the terminal (normally http://localhost:5173). The 
 
 Open the app and choose **Create an account** to register with a name, email, and password (8 characters minimum). Each person signs in with their own credentials and can sign out from the profile area. Passwords are stored as salted scrypt hashes; sessions use random, HTTP-only, same-site cookies and expire after 14 days. Account and session records are stored under `data/` and are excluded from Git.
 
+**Forgot password** sends a one-time link that expires after 30 minutes. Configure `RESEND_API_KEY`, a verified sender in `EMAIL_FROM`, and the public frontend origin in `APP_URL` to enable delivery. Reset tokens are stored as hashes, and a successful reset invalidates that account’s existing sessions. Without these settings, the UI clearly reports that email delivery is not configured.
+
 This prototype is a shared engineering workspace: signed-in users can see the same incident records and use the same configured Hindsight bank. Keep `data/` on durable storage when deploying. For a public production service, add email verification, password reset, rate limiting, and an organization invitation flow before opening account registration to everyone.
 
 ## Hindsight Cloud setup
