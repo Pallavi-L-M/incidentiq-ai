@@ -7,6 +7,7 @@ IncidentIQ AI is a full-stack incident-response MVP with a React + TypeScript da
 - Node.js 20+
 - A Hindsight Cloud account, API key, and memory bank ID
 - A Groq API key for AI reasoning
+- A Supabase project for persistent PostgreSQL storage in deployment (optional for local fallback)
 
 ## Run locally
 
@@ -25,7 +26,7 @@ Open the app and choose **Create an account** to register with a name, email, an
 
 **Forgot password** sends a one-time link that expires after 30 minutes. Configure `RESEND_API_KEY`, a verified sender in `EMAIL_FROM`, and the public frontend origin in `APP_URL` to enable delivery. Reset tokens are stored as hashes, and a successful reset invalidates that account’s existing sessions. Without these settings, the UI clearly reports that email delivery is not configured.
 
-This prototype is a shared engineering workspace: signed-in users can see the same incident records and use the same configured Hindsight bank. Keep `data/` on durable storage when deploying. For a public production service, add email verification, password reset, rate limiting, and an organization invitation flow before opening account registration to everyone.
+This prototype is a shared engineering workspace: signed-in users can see the same incident records and use the same configured Hindsight bank. Keep `data/` on durable storage when deploying. Before opening a public service, add email verification, rate limiting, and an organization invitation flow; password reset is implemented but needs email delivery configuration.
 
 ## Hindsight Cloud setup
 
@@ -33,6 +34,16 @@ This prototype is a shared engineering workspace: signed-in users can see the sa
 2. Open the Cloud **Connect** page. Copy the API endpoint and create an API key. Hindsight only displays a new key once.
 3. Set `HINDSIGHT_BASE_URL=https://api.hindsight.vectorize.io`, `HINDSIGHT_API_KEY`, and `HINDSIGHT_BANK_ID` in the server environment. Use a bank dedicated to this organization/workspace. Never use a `VITE_` prefix for secrets.
 4. Restart the server. The Settings page checks the connection; Memory Explorer's live results come from `listMemories`, and incident intake uses Hindsight `recall` before Groq analysis.
+
+## Persistent database setup
+
+The original project used local JSON files for incident data. For persistent hosted storage, create a Supabase project and run [`supabase/migrations/001_incident_memory.sql`](supabase/migrations/001_incident_memory.sql) in the Supabase SQL editor. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in the server environment (for Render, add them as service environment variables). Keep the service role key on the backend only. The dashboard and incident history then read and write Supabase PostgreSQL. When these variables are absent, local development uses the existing JSON file store and the UI labels that source clearly.
+
+When incident storage is empty, the API seeds five clearly marked sample incidents once. Use **Retain demo samples** in Memory Explorer to store their experiences through the official TypeScript SDK. The application marks a sample as retained only after Hindsight confirms success. A newly reported incident triggers recall but is retained as a learned experience after an engineer records its resolution. Retention uses a stable per-incident document ID so retrying a resolved incident updates the same Hindsight document instead of creating duplicates. The SDK's retain response exposes operation metadata, not a memory-unit ID; the stored document reference is labeled separately from IDs returned by live recall.
+
+The refreshed Dashboard summary and charts come from `/api/dashboard`. Memory Explorer separates application database records from results returned live by Hindsight. Database metadata is not counted as a retained Hindsight memory unless the Hindsight call succeeded. Configure Hindsight independently from Supabase; when either service is unavailable, the API reports the failure instead of inventing results.
+
+The integration follows the official [Hindsight TypeScript client](https://hindsight.vectorize.io/sdks/nodejs), including its documented `retain`, `recall`, and `listMemories` operations.
 5. Resolve an incident only after recording the actual fix. A successful Hindsight `retain` stores the full incident context, the explicitly labeled root-cause hypothesis, troubleshooting steps, engineer-reported failed approaches, actual resolution, and outcome. A failed retain is reported in the UI and is never represented as a stored memory.
 
 The integration uses `@vectorize-io/hindsight-client` and its documented `HindsightClient({baseUrl, apiKey})`, `recall`, `retain`, and `listMemories` methods. See [Hindsight Cloud API Integration](https://docs.hindsight.vectorize.io/cloud/api-integration/) and [Hindsight TypeScript SDK Guide](https://docs.hindsight.vectorize.io/cloud/typescript-sdk/).
