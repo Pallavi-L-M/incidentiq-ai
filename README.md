@@ -5,7 +5,7 @@ IncidentIQ AI is a full-stack incident-response MVP with a React + TypeScript da
 ## Requirements
 
 - Node.js 20+
-- A Hindsight Cloud account, API key, and memory bank ID
+- A Hindsight Cloud account and credits, or a self-hosted Hindsight server (Windows supported)
 - A Groq API key for AI reasoning
 - A Supabase project for persistent PostgreSQL storage in deployment (optional for local fallback)
 
@@ -22,7 +22,7 @@ Open the Vite URL printed in the terminal (normally http://localhost:5173). The 
 
 ## Accounts and team access
 
-Open the app and choose **Create an account** to register with a name, email, and password (8 characters minimum). Each person signs in with their own credentials and can sign out from the profile area. Passwords are stored as salted scrypt hashes; sessions use random, HTTP-only, same-site cookies and expire after 14 days. Account and session records are stored under `data/` and are excluded from Git.
+Open the app and choose **Create an account** to register with a name, email, and password (8 characters minimum). Each person signs in with their own credentials and can sign out from the profile area. Each browser/device gets an independent session; Settings lists active devices and can revoke one device or all other devices. Passwords are stored as salted scrypt hashes; sessions use random, HTTP-only, same-site cookies and expire after 14 days. Account and session records are stored under `data/` and are excluded from Git.
 
 **Forgot password** sends a one-time link that expires after 30 minutes. Configure `RESEND_API_KEY`, a verified sender in `EMAIL_FROM`, and the public frontend origin in `APP_URL` to enable delivery. Reset tokens are stored as hashes, and a successful reset invalidates that account’s existing sessions. Without these settings, the UI clearly reports that email delivery is not configured.
 
@@ -39,15 +39,20 @@ This prototype is a shared engineering workspace: signed-in users can see the sa
 
 The original project used local JSON files for incident data. For persistent hosted storage, create a Supabase project and run [`supabase/migrations/001_incident_memory.sql`](supabase/migrations/001_incident_memory.sql) in the Supabase SQL editor. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in the server environment (for Render, add them as service environment variables). Keep the service role key on the backend only. The dashboard and incident history then read and write Supabase PostgreSQL. When these variables are absent, local development uses the existing JSON file store and the UI labels that source clearly.
 
-When incident storage is empty, the API seeds five clearly marked sample incidents once. Use **Retain demo samples** in Memory Explorer to store their experiences through the official TypeScript SDK. The application marks a sample as retained only after Hindsight confirms success. A newly reported incident triggers recall but is retained as a learned experience after an engineer records its resolution. Retention uses a stable per-incident document ID so retrying a resolved incident updates the same Hindsight document instead of creating duplicates. The SDK's retain response exposes operation metadata, not a memory-unit ID; the stored document reference is labeled separately from IDs returned by live recall.
+When incident storage is empty, the API seeds 17 clearly marked sample incidents once. Missing demo sample IDs are added idempotently to an existing workspace. Use **Retain demo samples** in Memory Explorer to store their experiences through the official TypeScript SDK. The application marks a sample as retained only after Hindsight confirms success. A newly reported incident triggers recall but is retained as a learned experience after an engineer records its resolution. Retention uses a stable per-incident document ID so retrying a resolved incident updates the same Hindsight document instead of creating duplicates. The SDK's retain response exposes operation metadata, not a memory-unit ID; the stored document reference is labeled separately from IDs returned by live recall.
 
-The refreshed Dashboard summary and charts come from `/api/dashboard`. Memory Explorer separates application database records from results returned live by Hindsight. Database metadata is not counted as a retained Hindsight memory unless the Hindsight call succeeded. Configure Hindsight independently from Supabase; when either service is unavailable, the API reports the failure instead of inventing results.
+The refreshed Dashboard summary and charts come from `/api/dashboard`. Memory Explorer lists every incident from the connected database immediately, then labels whether Hindsight retention was confirmed. Live recall results are shown separately. Database metadata is never counted as a retained Hindsight memory unless the Hindsight call succeeded. Configure Hindsight independently from Supabase; when either service is unavailable, the API reports the failure instead of inventing results.
 
-The integration follows the official [Hindsight TypeScript client](https://hindsight.vectorize.io/sdks/nodejs), including its documented `retain`, `recall`, and `listMemories` operations.
+The header bell and envelope open a shared incident alert inbox. New and resolved incident alerts persist in `incident_notifications` (or the local JSON fallback), and read state is shared across signed-in devices. The inbox is an IncidentIQ alert center; it does not connect to or read an external Gmail/Outlook mailbox. Each login creates a separate device session. Settings lists active sessions and lets the user sign out one other device or all other devices. Workspace incidents and alerts refresh across open sessions every 15 seconds.
+
+The integration follows the official [Hindsight TypeScript client](https://hindsight.vectorize.io/sdks/nodejs), including its documented `retain`, `recall`, and `listMemories` operations. The connection check uses the current documented bank config endpoint because the former bank profile endpoint was removed.
 5. Resolve an incident only after recording the actual fix. A successful Hindsight `retain` stores the full incident context, the explicitly labeled root-cause hypothesis, troubleshooting steps, engineer-reported failed approaches, actual resolution, and outcome. A failed retain is reported in the UI and is never represented as a stored memory.
 
 The integration uses `@vectorize-io/hindsight-client` and its documented `HindsightClient({baseUrl, apiKey})`, `recall`, `retain`, and `listMemories` methods. See [Hindsight Cloud API Integration](https://docs.hindsight.vectorize.io/cloud/api-integration/) and [Hindsight TypeScript SDK Guide](https://docs.hindsight.vectorize.io/cloud/typescript-sdk/).
 
+## No-cost local Hindsight option
+
+Hindsight Cloud requires credits for successful retain and recall operations. The open-source Hindsight API can be self-hosted for a laptop demo. Install and run it using the official [Windows installation guide](https://hindsight.vectorize.io/developer/installation), and configure a model provider for the Hindsight service. In IncidentIQ's `.env`, set `HINDSIGHT_BASE_URL=http://localhost:8888`, `HINDSIGHT_API_KEY=local-dev` (local Hindsight authentication is off by default), and `HINDSIGHT_BANK_ID=incidentiq-demo`. Keep both the Hindsight server and IncidentIQ running during a local demo. A deployed app cannot reach a Hindsight server running only on your laptop; it needs a reachable hosted Hindsight endpoint.
 ## Groq setup
 
 Set `GROQ_API_KEY` on the backend. The app calls Groq's OpenAI-compatible chat completions endpoint from Express, requests JSON output, and uses the configured `GROQ_MODEL` (default `llama-3.3-70b-versatile`). The API key is not sent to the browser. Without it, the app reports that analysis is not configured and provides only a basic, clearly labeled fallback checklist.
@@ -60,7 +65,7 @@ Set `GROQ_API_KEY` on the backend. The app calls Groq's OpenAI-compatible chat c
 4. Submit a follow-up incident such as **Application database requests are failing again** with **Database connection timeout** as the error, or use **Memory Explorer → Recall from Hindsight now**. Inspect the returned facts, which are fetched live from Hindsight.
 5. Ask the assistant **Have we faced this issue before, and how did we resolve it?** The answer displays the actual Hindsight memories returned for that query.
 
-The supplied five `DEMO-` records are clearly labeled sample data. They are kept out of Hindsight and cannot be mistaken for retained real memories. The sample database timeout does not pre-populate the memory bank.
+All `DEMO-` records are clearly labeled sample data and are never presented as real production incidents. They appear in the incident database; Memory Explorer distinguishes them from Hindsight memories and shows retention as confirmed only after Hindsight accepts the operation. To avoid Cloud credits for a local presentation, the app can point at a self-hosted Hindsight API on `http://localhost:8888`; see the local setup note below.
 
 ## Storage and deployment
 
